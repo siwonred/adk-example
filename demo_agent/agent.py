@@ -19,7 +19,7 @@ from google.genai.types import UserContent, Part
 from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
 
-from .travel_planner import TravelPlannerAgent
+from .travel_planner_v2 import create_travel_planner_agent
 
 # ---------- Configuration -----------------------------
 logging.basicConfig(
@@ -172,7 +172,7 @@ cancel_order_agent = LlmAgent(
     tools=[choose_order, cancel_order],
 )
 
-travel_planner_agent = TravelPlannerAgent()
+travel_planner_agent = create_travel_planner_agent()
 
 root_agent = Agent(
     name="router",
