@@ -44,7 +44,7 @@ class RoutingCondition(BaseModel):
 # 순환 import를 피하기 위해 TYPE_CHECKING 사용
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
-    from .component import ScenarioComponentAgent
+    from .base_component import ScenarioComponentAgent
 
 class ScenarioComponent(BaseModel):
     """시나리오 컴포넌트 정의"""

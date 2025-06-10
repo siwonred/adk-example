@@ -20,6 +20,7 @@ from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
 
 from .travel_planner_v2 import create_travel_planner_agent
+from .smart_recipe_assistant import create_smart_recipe_assistant_agent
 
 # ---------- Configuration -----------------------------
 logging.basicConfig(
@@ -173,6 +174,7 @@ cancel_order_agent = LlmAgent(
 )
 
 travel_planner_agent = create_travel_planner_agent()
+recipe_assistant_agent = create_smart_recipe_assistant_agent()
 
 root_agent = Agent(
     name="router",
@@ -184,9 +186,10 @@ root_agent = Agent(
         "• Contains '날씨' or 'weather' → delegate to `weather_agent`.\n"
         "• Contains '취소', 'cancel', or looks like an order cancellation → delegate to `cancel_order_agent`.\n"
         "• Contains '여행', 'travel plan' → delegate to `travel_planner_agent`.\n"
+        "• Contains '요리', '레시피', 'recipe', 'cooking', or food-related requests → delegate to `recipe_assistant_agent`.\n"
         "• Otherwise → delegate to `rag_agent`.\n"
         "Use the `delegate(to=...)` action to transfer control."),
-    sub_agents=[weather_agent, cancel_order_agent, rag_agent, travel_planner_agent],
+    sub_agents=[weather_agent, cancel_order_agent, rag_agent, travel_planner_agent, recipe_assistant_agent],
 )
 
 # ---------- Main Execution -----------------------------
