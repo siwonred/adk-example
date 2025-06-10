@@ -19,7 +19,7 @@ from google.adk.agents import BaseAgent, LlmAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.runners import InMemoryRunner
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 from google.adk.models import LlmResponse
 from google.genai.types import UserContent, Part
 from google.adk.models import Gemini
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 gemini = Gemini(
     api_key=os.getenv("GEMINI_API_KEY"),
-    model_name="gemini-2.5-pro-preview-05-06"
+    model="gemini-2.5-flash-preview-05-20"
 )
 
 # ---------- Pydantic Schemas -----------------------------
@@ -57,14 +57,6 @@ class TravelPlannerAgent(BaseAgent):
     
     # Pydantic 설정
     model_config = {"arbitrary_types_allowed": True}
-    
-    # 상태 정리 대상 키들 정의 (클래스 변수)
-    STATE_KEYS_TO_CLEANUP: ClassVar[list[str]] = [
-        "target_city",
-        "city_selection_complete",
-        "city_input_agent_output",
-        "city_info"
-    ]
     
     def __init__(self):
         # JSON 후처리 함수 - user_message만 추출
@@ -106,11 +98,7 @@ class TravelPlannerAgent(BaseAgent):
                     decision_data = json.loads(json_text)
                     logger.info(f"[callback] JSON 파싱 성공: {decision_data}")
                     
-                    # 전체 JSON을 state에 저장 (파싱용)
-                    json_string = json.dumps(decision_data)
-                    callback_context.state["city_input_agent_output"] = json_string
-                    logger.info(f"[callback] state에 저장 완료, 타입: {type(json_string)}")
-                    logger.info(f"[callback] 저장된 데이터: {json_string}")
+                    callback_context.state["city_input_agent_output"] = decision_data
                     
                     # user_message만 추출해서 유저에게 보여주기
                     user_message = decision_data.get("user_message", "")
@@ -140,42 +128,85 @@ class TravelPlannerAgent(BaseAgent):
         # 도시 입력 에이전트 (LLM이 구조화된 판단 반환)
         city_input_agent = LlmAgent(
             name="city_input_agent",
-            model=gemini,
-            description="유저와 대화하며 여행 도시를 선택하는 에이전트",
+            model=gemini.model,
+            description="여행 도시를 확인하는 에이전트",
             instruction=(
-                "당신은 친근한 여행 상담사입니다.\n"
-                "사용자와 자연스럽게 대화하며 여행하고 싶은 도시를 파악하세요.\n\n"
+                "# 🏙️ 도시 확인 에이전트\n\n"
                 
-                "**중요: 응답은 반드시 다음 JSON 형식으로 시작해야 합니다:**\n"
+                "## 🎯 역할\n"
+                "사용자의 여행 의도에서 **구체적인 도시명**을 파악하고 확정하는 전문가입니다.\n\n"
+                
+                "## 📋 수행 작업\n"
+                "1. 사용자 입력에서 도시명 추출 시도\n"
+                "2. 도시명이 명확한지 판단\n"
+                "3. 결과를 JSON 형식으로 반환\n\n"
+                
+                "## 📤 출력 형식\n"
+                "반드시 다음 JSON 형식으로만 응답하세요:\n\n"
                 "```json\n"
                 "{\n"
-                '  "decision": "complete" 또는 "continue",\n'
-                '  "city_name": "확정된 도시명 (확실하지 않으면 빈 문자열)",\n'
-                '  "confidence": "high", "medium", 또는 "low",\n'
-                '  "reason": "판단 이유 설명",\n'
-                '  "user_message": "사용자에게 보여줄 친근한 메시지"\n'
+                '  "decision": "complete" | "continue",\n'
+                '  "city_name": "확정된 도시명 또는 빈 문자열",\n'
+                '  "confidence": "high" | "medium" | "low",\n'
+                '  "reason": "판단 근거",\n'
+                '  "user_message": "사용자에게 전달할 메시지"\n'
                 "}\n"
                 "```\n\n"
                 
-                "**응답 가이드:**\n"
-                "- decision: 사용자가 구체적인 도시를 명확히 언급했으면 'complete', 더 정보가 필요하면 'continue'\n"
-                "- city_name: 사용자가 명확히 언급한 도시명 (확실하지 않으면 빈 문자열)\n"
-                "- confidence: 도시 선택의 확실성 정도 (high/medium/low)\n"
-                "- reason: 판단한 이유를 간단히 설명\n"
-                "- user_message: 사용자에게 보여줄 친근하고 도움이 되는 메시지\n\n"
+                "## 🔍 판단 기준\n"
+                "### ✅ `decision: \"complete\"` 조건\n"
+                "- **구체적 도시명** 명시: 파리, 도쿄, 뉴욕, 서울 등\n"
+                "- **명확성**: 다른 해석이 불가능\n"
+                "- **confidence**: high/medium\n\n"
                 
-                "**user_message 작성 가이드:**\n"
-                "- 도시가 확정되면: 그 도시에 대한 긍정적 코멘트와 여행 계획 도움 의사\n"
-                "- 더 정보 필요시: 구체적인 선택지나 질문을 제안해서 대화 유도\n"
-                "- 항상 친근하고 도움이 되는 톤으로 작성\n\n"
-                "- 도시에 대해서 골랐다면, 질문을 더 하지 말고 잘 마무리해줘.\n"
+                "### 🔄 `decision: \"continue\"` 조건\n"
+                "- **지역명만**: 유럽, 아시아, 동남아시아 등\n"
+                "- **추상적 표현**: 따뜻한 곳, 시원한 곳, 유명한 곳 등\n"
+                "- **모호함**: 여러 도시 가능성\n"
+                "- **confidence**: low\n\n"
                 
-                "예시:\n"
-                "사용자: '파리로 여행가고 싶어요' → user_message: '파리 정말 좋은 선택이네요! 낭만의 도시 파리는 에펠탑, 루브르 박물관 등 볼거리가 정말 많죠. 파리 여행 계획을 도와드릴게요!'\n"
-                "사용자: '유럽 어디로 갈까요?' → user_message: '유럽 여행 정말 좋죠! 어떤 스타일의 여행을 원하세요? 낭만적인 파리, 역사적인 로마, 현대적인 런던 등 다양한 선택지가 있어요. 특별히 관심 있는 활동이나 분위기가 있으신가요?'"
+                "## 💬 메시지 작성 가이드\n"
+                "### Complete인 경우\n"
+                "- 간단한 확인: \"○○ 여행이시군요! 알겠습니다. 찾아볼께요!\"\n"
+                "- 도시명만 언급, 추가 질문 없음\n\n"
+                
+                "### Continue인 경우\n"
+                "- 도시명 구체화 요청\n"
+                "- 단순하고 직접적인 질문\n"
+                "- 유저가 넓은 범주를 말한 경우, 고르기 쉽게 예시 제시"
+                "- 예: \"어떤 도시를 생각하고 계신가요?\"\n\n"
+                
+                "## 📚 예시\n\n"
+                "**사용자 입력:** \"파리 가고 싶어요\"\n"
+                "**모델 출력:**\n"
+                "```json\n"
+                "{\n"
+                '  "decision": "complete",\n'
+                '  "city_name": "파리",\n'
+                '  "confidence": "high",\n'
+                '  "reason": "명확한 도시명 제시됨",\n'
+                '  "user_message": "파리 여행이시군요! 네 알겠습니다! 찾아보도록 하겠습니다 :)"\n'
+                "}\n"
+                "```\n\n"
+                
+                "**사용자 입력:** \"유럽 여행 생각 중이에요\"\n"
+                "**모델 출력:**\n"
+                "```json\n"
+                "{\n"
+                '  "decision": "continue",\n'
+                '  "city_name": "",\n'
+                '  "confidence": "low",\n'
+                '  "reason": "지역명만 있고 구체적 도시 없음",\n'
+                '  "user_message": "유럽의 어떤 도시를 생각하고 계신가요? 파리나 런던, 로마는 어떠세요?"\n'
+                "}\n"
+                "```\n\n"
+                
+                "## ⚠️ 중요 사항\n"
+                "- **여행 계획은 묻지 마세요** (예산, 기간, 스타일, 활동)\n"
+                "- **도시명 확보에만 집중**하세요\n"
+                "- **JSON 형식을 정확히** 따르세요\n"
+                "- **간결하고 명확한** 메시지를 작성하세요"
             ),
-            # output_schema=CitySelectionDecision,  # 🚫 제거: validation 충돌 방지
-            # output_key="city_input_agent_output",  # 🚫 제거: callback과 키 충돌 방지
             after_model_callback=extract_user_message,  # 🎯 JSON에서 user_message만 추출 + state 저장
             disallow_transfer_to_peers=True  # 🚫 Peer transfer 금지
         )
@@ -183,18 +214,33 @@ class TravelPlannerAgent(BaseAgent):
         # 도시 정보 제공 에이전트  
         city_info_agent = LlmAgent(
             name="city_info_agent", 
-            model=gemini,
+            model=gemini.model,
             description="선택된 도시에 대한 상세 정보를 제공하는 에이전트",
             instruction=(
-                "당신은 여행 정보 전문가입니다. "
-                "state['target_city']에 저장된 도시에 대한 정보를 제공하세요. "
-                "다음 정보를 포함해서 친근하게 설명해주세요:\n"
-                "1. 도시 소개 (위치, 특징)\n"
-                "2. 주요 관광지 3-4곳\n"
-                "3. 추천 음식\n"
-                "4. 여행 팁 (교통, 날씨 등)\n"
-                "5. 추천 여행 기간\n\n"
-                "정보는 구체적이고 실용적으로 제공해주세요."
+                "당신은 여행 정보 전문가입니다.\n"
+                "**중요: 즉시 구체적이고 상세한 여행 정보를 제공하세요!**\n\n"
+                
+                "**반드시 포함할 내용:**\n"
+                "1. 📍 도시 소개 (위치, 특징)\n"
+                "2. 🏛️ 주요 관광지 3-4곳 (구체적인 장소명과 설명)\n"
+                "3. 🍜 추천 음식 (대표 요리와 맛집)\n"
+                "4. 💡 여행 팁 (교통, 날씨, 주의사항)\n"
+                "5. ⏰ 추천 여행 기간\n\n"
+                
+                "**작성 원칙:**\n"
+                "- '준비해드리겠습니다', '알려드릴게요' 같은 예고 말고 바로 정보 제공!\n"
+                "- 구체적인 장소명, 음식명, 가격 정보 포함\n"
+                "- 실용적이고 도움되는 팁 위주\n"
+                "- 최소 200자 이상의 상세한 설명\n\n"
+                
+                "**좋은 예시 시작:**\n"
+                "'가고시마는 일본 규슈 남부에 위치한 화산과 온천의 도시입니다. 🌋'\n\n"
+                
+                "**나쁜 예시 (금지!):**\n"
+                "'가고시마 여행 정보를 준비해드리겠습니다!'\n"
+                "'정보를 정리해서 알려드릴게요!'\n\n"
+                
+                "🎯 **핵심: 예고 없이 바로 상세 정보 제공!**"
             ),
             output_key="city_info",
             disallow_transfer_to_peers=True  # 🚫 Peer transfer 금지
@@ -209,17 +255,43 @@ class TravelPlannerAgent(BaseAgent):
             city_info_agent=city_info_agent
         )
     
-    def _cleanup_state(self, ctx: InvocationContext) -> None:
-        """여행 계획 관련 상태 정리"""
-        removed_keys = []
-        for key in self.STATE_KEYS_TO_CLEANUP:
-            if ctx.session.state.pop(key, None) is not None:
-                removed_keys.append(key)
+    async def _cleanup_state(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
+        """여행 계획 관련 상태 정리 (Event state_delta 방식)"""
+        # 🧹 정리할 상태 키들 정의 (함수 내부 상수)
+        STATE_KEYS_TO_CLEANUP = [
+            "target_city",
+            "city_selection_complete",
+            "city_input_agent_output",
+            "city_info"
+        ]
         
-        if removed_keys:
-            logger.info(f"[{self.name}] 상태 정리 완료: {removed_keys}")
+        # 🎯 ADK 올바른 방식: Event의 state_delta를 통한 상태 정리
+        state_deltas = {}
+        
+        # 정리할 키들 확인 후 state_delta에 None 설정 (삭제 의미)
+        keys_to_remove = []
+        for key in STATE_KEYS_TO_CLEANUP:
+            if key in ctx.session.state:
+                keys_to_remove.append(key)
+                state_deltas[key] = None  # None으로 설정하면 삭제
+        
+        if state_deltas:
+            logger.info(f"[{self.name}] 🧹 state_delta로 상태 정리: {keys_to_remove}")
+            
+            # EventActions를 통해 state 변경 요청
+            cleanup_actions = EventActions(state_delta=state_deltas)
+            
+            # Event를 yield하여 Runner가 상태 정리 처리
+            yield Event(
+                author=self.name,
+                invocation_id=ctx.invocation_id,
+                actions=cleanup_actions,
+                content=None  # 내부 정리 작업이므로 content 없음
+            )
+            
+            logger.info(f"[{self.name}] ✅ 상태 정리 Event 생성 완료")
         else:
-            logger.debug(f"[{self.name}] 정리할 상태 없음")
+            logger.debug(f"[{self.name}] 🔍 정리할 상태 없음")
     
     def _is_city_already_selected(self, ctx: InvocationContext) -> bool:
         """도시가 이미 선택되어 있는지 확인"""
@@ -234,7 +306,6 @@ class TravelPlannerAgent(BaseAgent):
             yield event
         
         # LLM 판단 결과 처리 (원본 응답에서 JSON 파싱)
-        logger.info(f"[{self.name}] 여기도달함!!!!")
         self._process_city_decision(ctx)
         
         logger.info(f"[{self.name}] 도시 선택 시도 완료")
@@ -243,34 +314,7 @@ class TravelPlannerAgent(BaseAgent):
         """LLM의 도시 선택 판단 결과 처리 (output_schema 기반)"""
         logger.info(f"[{self.name}] 현재 session state 전체: {dict(ctx.session.state)}")
         
-        agent_response = ctx.session.state.get("city_input_agent_output")
-        logger.info(f"[{self.name}] agent_response: {agent_response}")
-        logger.info(f"[{self.name}] agent_response 타입: {type(agent_response)}")
-        logger.info(f"[{self.name}] agent_response 길이: {len(agent_response) if agent_response else 'None'}")
-        
-        if not agent_response:
-            logger.warning(f"[{self.name}] LLM 응답 없음")
-            return False
-        
-        # agent_response가 이미 dict인지 string인지 확인
-        if isinstance(agent_response, dict):
-            logger.info(f"[{self.name}] agent_response는 이미 dict 형태: {agent_response}")
-            decision_data = agent_response
-        elif isinstance(agent_response, str):
-            logger.info(f"[{self.name}] agent_response는 string, JSON 파싱 시도")
-            try:
-                # output_schema로 생성된 JSON 직접 파싱
-                import json
-                decision_data = json.loads(agent_response)
-                logger.info(f"[{self.name}] 파싱된 decision_data: {decision_data}")
-            except (json.JSONDecodeError, ValueError, TypeError) as e:
-                logger.error(f"[{self.name}] JSON 파싱 실패: {e}")
-                logger.error(f"[{self.name}] 파싱 실패한 원본 데이터: '{agent_response}'")
-                return False
-        else:
-            logger.error(f"[{self.name}] 예상치 못한 agent_response 타입: {type(agent_response)}")
-            return False
-            
+        decision_data = ctx.session.state.get("city_input_agent_output")
         try:
             # Pydantic 검증
             decision = CitySelectionDecision.model_validate(decision_data)
@@ -336,12 +380,14 @@ class TravelPlannerAgent(BaseAgent):
                     logger.info(f"[{self.name}] ✅ 도시 선택 완료 확인됨!")
             
             # Step 2: 도시 정보 제공 (도시가 선택된 경우만)
+            logger.info(f"[{self.name}] 🎯 도시 정보 제공을 city_info_agent에게 위임")
             async for event in self._provide_city_info(ctx):
                 yield event
             
             logger.info(f"[{self.name}] 여행 계획 성공적으로 완료!")
             
         finally:
-            # 성공/실패 상관없이 상태 정리
-            self._cleanup_state(ctx)
+            # 🎯 ADK 방식: Event를 통한 상태 정리
+            async for cleanup_event in self._cleanup_state(ctx):
+                yield cleanup_event
             logger.info(f"[{self.name}] 상태 정리 완료, 다음번 새로운 도시 선택 가능")

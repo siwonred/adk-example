@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 gemini = Gemini(
     api_key=os.getenv("GEMINI_API_KEY"),
-    model_name="gemini-2.5-pro-preview-05-06"
+    model="gemini-2.5-flash-preview-05-20"
 )
 
 # ---------- Mock Data and Backend Functions -----------------------------
@@ -139,7 +139,7 @@ def choose_order(state: Optional[str] = None, order_id: Optional[str] = None) ->
 # ---------- Agents Definition -----------------------------
 weather_agent = Agent(
     name="weather_agent",
-    model=gemini,
+    model=gemini.model,
     description="Provides quick weather summaries.",
     instruction=(
         "If the user asks about weather, call `get_weather(location)` and present the report "
@@ -149,7 +149,7 @@ weather_agent = Agent(
 
 rag_agent = Agent(
     name="rag_agent",
-    model=gemini,
+    model=gemini.model,
     description="General Q&A backed by a mini RAG store.",
     instruction=(
         "Use `retrieve_doc(query)` whenever external knowledge is needed. "
