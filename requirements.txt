@@ -1,0 +1,11 @@
+# Google ADK (Agent Development Kit) dependencies
+google-adk>=0.1.0
+google-genai>=0.1.0
+
+# Standard Python libraries used in the project
+# (asyncio, os, typing, logging are built-in modules)
+
+# Optional: For better development experience
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0 

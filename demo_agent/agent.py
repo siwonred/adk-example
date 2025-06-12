@@ -1,7 +1,7 @@
 """adk_agents.py — Google ADK (2025‑06) demo
 ================================================
 
-Order cancellation agent with interactive order selection.
+Multi-agent system with weather, order management, travel planning, and RAG capabilities.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from google.genai.types import UserContent, Part
 from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
 
+from .travel_planner import TravelPlannerAgent
+from .order import OrderAgent
 from .travel_planner_v2 import create_travel_planner_agent
 from .smart_recipe_assistant import create_smart_recipe_assistant_agent
 
@@ -57,11 +59,6 @@ _DOCS = [
     },
 ]
 
-_orders: List[Dict[str, str]] = [
-    {"id": "A001", "item": "블루투스 이어버드", "status": "processing"},
-    {"id": "A002", "item": "USB‑C 충전기", "status": "processing"},
-]
-
 def get_weather(location: str) -> Dict[str, str]:
     """Return current weather (very fake!)."""
     forecast = _FAKE_FORECASTS.get(location.lower(), "구름 조금, 24  °C")
@@ -71,71 +68,6 @@ def retrieve_doc(query: str) -> Dict[str, str]:
     """Extremely naïve keyword matcher that returns one best doc."""
     best = max(_DOCS, key=lambda d: sum(tok in d["content"] for tok in query.split()))
     return {"status": "success", "snippet": best["content"]}
-
-def get_orders(state: Optional[str] = None) -> Dict[str, List[Dict[str, str]]]:
-    """Return orders, optionally filtering by status/state string."""
-    if state is None:
-        filtered = _orders
-    else:
-        filtered = [o for o in _orders if o["status"] == state]
-    return {
-        "status": "success",
-        "orders": filtered,
-    }
-
-def cancel_order(order_id: str) -> Dict[str, str]:
-    """Cancel an order by ID."""
-    for o in _orders:
-        if o["id"] == order_id and o["status"] == "processing":
-            o["status"] = "cancelled"
-            return {"status": "success", "result": f"주문 {order_id} 취소 완료"}
-    return {"status": "error", "error_message": "해당 주문을 찾을 수 없거나 이미 취소되었습니다."}
-
-# ---------- Core Business Logic -----------------------------
-def choose_order(state: Optional[str] = None, order_id: Optional[str] = None) -> Dict:
-    """주문 선택 툴 - order_id가 없으면 목록 조회, 있으면 해당 주문 선택"""
-    
-    # 사용자가 특정 주문 ID를 선택한 경우
-    if order_id:
-        for order in _orders:
-            if order["id"] == order_id and (not state or order["status"] == state):
-                return {
-                    "status": "success",
-                    "selected_order_id": order_id,
-                    "options": [],
-                    "message": f"주문 {order_id}({order['item']})를 선택했습니다."
-                }
-        return {
-            "status": "error", 
-            "selected_order_id": None,
-            "options": [],
-            "message": f"주문 {order_id}를 찾을 수 없거나 상태가 맞지 않습니다."
-        }
-    
-    # 주문 목록 조회 및 자동 선택 로직
-    orders = get_orders(state)
-    if orders["status"] == "success":
-        if len(orders["orders"]) == 1:
-            return {
-                "status": "success",
-                "selected_order_id": orders["orders"][0]["id"],
-                "options": orders["orders"],
-                "message": f"주문 {orders['orders'][0]['id']}를 선택했습니다."
-            }
-        else:
-            return {
-                "status": "pending",
-                "selected_order_id": None,
-                "options": orders["orders"],
-                "message": "주문이 2개 이상이므로 사용자에게 주문을 선택하라고 해주세요."
-            }
-    else:
-        return {
-            "status": "error",
-            "selected_order_id": None, 
-            "options": [],
-            "message": "주문 목록을 가져오는데 실패했습니다."
-        }
 
 # ---------- Agents Definition -----------------------------
 weather_agent = Agent(
@@ -158,23 +90,9 @@ rag_agent = Agent(
     tools=[retrieve_doc],
 )
 
-cancel_order_agent = LlmAgent(
-    name="cancel_order_agent",
-    model=gemini,
-    instruction=(
-        "Help users cancel orders. Start by calling `choose_order()` to see orders. "
-        "If multiple orders, show list and ask user to pick one. "
-        "When user gives order ID like A001, "
-        "  call `choose_order(order_id='A001')` then "
-        "  ask for final confirmation and then "
-        "  call `cancel_order(order_id='A001')`. "
-        "Respond in Korean."
-    ),
-    tools=[choose_order, cancel_order],
-)
-
-travel_planner_agent = create_travel_planner_agent()
-recipe_assistant_agent = create_smart_recipe_assistant_agent()
+travel_planner_agent = TravelPlannerAgent()
+smart_recipe_assistant_agent = create_smart_recipe_assistant_agent()
+order_agent = OrderAgent()
 
 root_agent = Agent(
     name="router",
@@ -184,12 +102,12 @@ root_agent = Agent(
         "Analyse the user request and decide which sub-agent is best suited.\n"
         "Rules:\n"
         "• Contains '날씨' or 'weather' → delegate to `weather_agent`.\n"
-        "• Contains '취소', 'cancel', or looks like an order cancellation → delegate to `cancel_order_agent`.\n"
+        "• Contains '주문', '취소', 'order', 'cancel', '조회', '생성', '목록', '상태', '확인', '주문하기', '주문생성', '주문취소', '주문조회', '구매', '결제', '배송' or anything order-related → delegate to `order_agent`.\n"
         "• Contains '여행', 'travel plan' → delegate to `travel_planner_agent`.\n"
-        "• Contains '요리', '레시피', 'recipe', 'cooking', or food-related requests → delegate to `recipe_assistant_agent`.\n"
+         "• Contains '요리', '레시피', 'recipe', 'cooking', or food-related requests → delegate to `recipe_assistant_agent`.\n"
         "• Otherwise → delegate to `rag_agent`.\n"
         "Use the `delegate(to=...)` action to transfer control."),
-    sub_agents=[weather_agent, cancel_order_agent, rag_agent, travel_planner_agent, recipe_assistant_agent],
+    sub_agents=[weather_agent, order_agent, rag_agent, travel_planner_agent, smart_recipe_assistant_agent],
 )
 
 # ---------- Main Execution -----------------------------
