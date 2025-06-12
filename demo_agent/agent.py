@@ -90,7 +90,7 @@ rag_agent = Agent(
     tools=[retrieve_doc],
 )
 
-travel_planner_agent = TravelPlannerAgent()
+travel_planner_agent = create_travel_planner_agent()
 smart_recipe_assistant_agent = create_smart_recipe_assistant_agent()
 order_agent = OrderAgent()
 
