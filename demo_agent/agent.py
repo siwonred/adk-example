@@ -21,6 +21,8 @@ from google.adk.models import Gemini
 
 from .travel_planner import TravelPlannerAgent
 from .order import OrderAgent
+from .travel_planner_v2 import create_travel_planner_agent
+from .smart_recipe_assistant import create_smart_recipe_assistant_agent
 
 # ---------- Configuration -----------------------------
 logging.basicConfig(
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 gemini = Gemini(
     api_key=os.getenv("GEMINI_API_KEY"),
-    model_name="gemini-2.5-pro-preview-05-06"
+    model="gemini-2.5-flash-preview-05-20"
 )
 
 # ---------- Mock Data and Backend Functions -----------------------------
@@ -70,7 +72,7 @@ def retrieve_doc(query: str) -> Dict[str, str]:
 # ---------- Agents Definition -----------------------------
 weather_agent = Agent(
     name="weather_agent",
-    model=gemini,
+    model=gemini.model,
     description="Provides quick weather summaries.",
     instruction=(
         "If the user asks about weather, call `get_weather(location)` and present the report "
@@ -80,7 +82,7 @@ weather_agent = Agent(
 
 rag_agent = Agent(
     name="rag_agent",
-    model=gemini,
+    model=gemini.model,
     description="General Q&A backed by a mini RAG store.",
     instruction=(
         "Use `retrieve_doc(query)` whenever external knowledge is needed. "
@@ -88,8 +90,8 @@ rag_agent = Agent(
     tools=[retrieve_doc],
 )
 
-travel_planner_agent = TravelPlannerAgent()
-
+travel_planner_agent = create_travel_planner_agent()
+smart_recipe_assistant_agent = create_smart_recipe_assistant_agent()
 order_agent = OrderAgent()
 
 root_agent = Agent(
@@ -102,9 +104,10 @@ root_agent = Agent(
         "• Contains '날씨' or 'weather' → delegate to `weather_agent`.\n"
         "• Contains '주문', '취소', 'order', 'cancel', '조회', '생성', '목록', '상태', '확인', '주문하기', '주문생성', '주문취소', '주문조회', '구매', '결제', '배송' or anything order-related → delegate to `order_agent`.\n"
         "• Contains '여행', 'travel plan' → delegate to `travel_planner_agent`.\n"
+         "• Contains '요리', '레시피', 'recipe', 'cooking', or food-related requests → delegate to `recipe_assistant_agent`.\n"
         "• Otherwise → delegate to `rag_agent`.\n"
         "Use the `delegate(to=...)` action to transfer control."),
-    sub_agents=[weather_agent, order_agent, rag_agent, travel_planner_agent],
+    sub_agents=[weather_agent, order_agent, rag_agent, travel_planner_agent, smart_recipe_assistant_agent],
 )
 
 # ---------- Main Execution -----------------------------
